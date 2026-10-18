@@ -4,6 +4,10 @@
 #   generator.sh  GiBUU.x  lib/  buuinput/  jobcards/  gibuu_to_hepmc.cc  hepmc_text.h  VERSION
 # Uses the build from build_gibuu.sh (build/GiBUU). For the grid, that build must
 # come from an SL7 environment (see build_gibuu.sh).
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  echo "Run this script as ./make_tarball_gibuu.sh (do not source it)." >&2
+  return 1
+fi
 set -e
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 top=$(dirname "$here")

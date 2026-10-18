@@ -13,11 +13,21 @@
 # To run on the grid the binary must be built in an SL7 environment, e.g. on a
 # uboone gpvm:
 #   apptainer shell -B /cvmfs,/exp,/pnfs /cvmfs/singularity.opensciencegrid.org/fermilab/fnal-dev-sl7:latest
-#   source build/global_vars.sh && cd build && ./build_gibuu.sh
+#   cd build && ./build_gibuu.sh
 
-set -e
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  echo "Run this script as ./build_gibuu.sh (do not source it)." >&2
+  return 1
+fi
 cd "$(dirname "${BASH_SOURCE[0]}")"
+# Load the UPS environment BEFORE set -e: global_vars.sh runs many UPS setups and
+# some return a non-zero status without anything being wrong.
 if [ -z "$SKIP_GLOBAL_VARS" ]; then source global_vars.sh; fi
+for t in gfortran make wget tar sha1sum git; do
+  command -v "$t" > /dev/null || { echo "ERROR: $t not found (environment from global_vars.sh incomplete?)" >&2; exit 1; }
+done
+echo "Using $(gfortran --version | head -1)"
+set -e
 
 URL="https://gibuu.hepforge.org/downloads?f="
 mkdir -p GiBUU && cd GiBUU

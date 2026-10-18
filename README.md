@@ -76,7 +76,7 @@ Nothing in the common script is generator specific.
 ```bash
 # on a uboone gpvm, in the SL7 container (the binaries must run on SL7 nodes)
 apptainer shell -B /cvmfs,/exp,/pnfs /cvmfs/singularity.opensciencegrid.org/fermilab/fnal-dev-sl7:latest
-cd build && source global_vars.sh && ./build_gibuu.sh && ./make_tarball_gibuu.sh
+cd build && ./build_gibuu.sh && ./make_tarball_gibuu.sh   # run, do not source
 cp ../prod_gibuu/hepmc_grid.cfg.example hepmc_grid.cfg     # edit
 # POT_Per_Event from a calibration (or a previous production): validation/check_production.py --flux ...
 echo "POT_Per_Event=3.22e15" > hepmc_POT.meta    # sigma 0.811e-38, MCC9 flux, TPC box

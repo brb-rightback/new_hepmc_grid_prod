@@ -35,14 +35,22 @@
 #
 # Everything left in the job directory is copied to the log directory by condor_lar.sh,
 # so the generator runs in a scratch subdirectory that is removed at the end. The
-# HEPMC_SUMMARY lines in the job log are the bookkeeping record of the production
-# (seeds, events, units); validation/check_production.py reads them.
+# HEPMC_SUMMARY lines (job stdout and hepmc_summary.txt, which ends up in log.tar) are
+# the bookkeeping record of the production (seeds, events, units);
+# validation/check_production.py reads them.
 
 hepmc_log() { echo "HEPMC_GRID: $*"; }
 
+# Bookkeeping line: to stdout (jobsub log) and to hepmc_summary.txt, which condor_lar.sh
+# packs into the log.tar copied to the project's log directory.
+hepmc_summary() {
+  echo "HEPMC_SUMMARY $*"
+  echo "HEPMC_SUMMARY $*" >> "${HEPMC_JOBDIR:-.}/hepmc_summary.txt"
+}
+
 hepmc_fail() {
   hepmc_log "FATAL: $1"
-  echo "HEPMC_SUMMARY status=FAILED generator=${HEPMC_GENERATOR:-unknown} reason=\"$1\" seed_base=${HEPMC_SEED_BASE:-unset} jobid=${JOBSUBJOBID:-unknown}"
+  hepmc_summary "status=FAILED generator=${HEPMC_GENERATOR:-unknown} reason=\"$1\" seed_base=${HEPMC_SEED_BASE:-unset} jobid=${JOBSUBJOBID:-unknown}"
   cd "$HEPMC_JOBDIR" 2>/dev/null
   return 1
 }
@@ -126,7 +134,7 @@ hepmc_main() {
     [ -f "$dir/generator.log" ] && tail -n 200 "$dir/generator.log" > "$HEPMC_JOBDIR/hepmc_attempt${attempt}_tail.log"
 
     if [ "$rc" -ne 0 ]; then
-      echo "HEPMC_SUMMARY attempt=$attempt status=GENERATOR_FAILED rc=$rc seed=$seed units=$units seconds=$dt jobid=${JOBSUBJOBID:-unknown}"
+      hepmc_summary "attempt=$attempt status=GENERATOR_FAILED rc=$rc seed=$seed units=$units seconds=$dt jobid=${JOBSUBJOBID:-unknown}"
       if [ "$rc" -eq 1 ] && [ "$HEPMC_RETRY_ON_FAILURE" = "1" ]; then
         failures=$(( failures + 1 ))
         attempt=$(( attempt + 1 ))
@@ -138,7 +146,7 @@ hepmc_main() {
     local n; n=$(gen_validate "$dir" "$seed")
     local vrc=$?
     [ "$vrc" -eq 0 ] && [ -n "$n" ] || { hepmc_fail "validation failed in attempt $attempt: $n"; return 1; }
-    echo "HEPMC_SUMMARY attempt=$attempt status=OK seed=$seed units=$units events=$n seconds=$dt $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
+    hepmc_summary "attempt=$attempt status=OK seed=$seed units=$units events=$n seconds=$dt $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
     dirs+=("$dir")
     have=$(( have + n ))
     units_done=$(( units_done + units ))
@@ -154,7 +162,7 @@ hepmc_main() {
   local nlines; nlines=$(awk 'NF==2' "$HEPMC_JOBDIR/nuwro_input.hepmc" | wc -l)
   [ "$nlines" -eq "$nconv" ] || { hepmc_fail "nuwro_input.hepmc has $nlines event headers, expected $nconv"; return 1; }
 
-  echo "HEPMC_SUMMARY status=OK generator=$HEPMC_GENERATOR seed_base=$HEPMC_SEED_BASE attempts=$attempt failed_attempts=$failures units=$units_done events=$have converted=$nconv needed=$HEPMC_NEVENTS_NEEDED $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
+  hepmc_summary "status=OK generator=$HEPMC_GENERATOR seed_base=$HEPMC_SEED_BASE attempts=$attempt failed_attempts=$failures units=$units_done events=$have converted=$nconv needed=$HEPMC_NEVENTS_NEEDED $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
 
   rm -rf "$HEPMC_WORK"
   cd "$HEPMC_JOBDIR"

@@ -4,6 +4,10 @@
 #   generator.sh  nuwro/bin/  nuwro/data/  params/  nuwro_to_hepmc.cc  hepmc_text.h  VERSION
 # Uses the build from build_nuwro.sh (build/nuwro), which must come from an SL7
 # environment with the e26 products of global_vars.sh (see build_gibuu.sh).
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  echo "Run this script as ./make_tarball_nuwro.sh (do not source it)." >&2
+  return 1
+fi
 set -e
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 top=$(dirname "$here")

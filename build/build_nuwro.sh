@@ -12,10 +12,21 @@
 # environment (see build_gibuu.sh); on the worker node NuWro is run in a clean
 # environment that sets up the same e26 products from cvmfs.
 
-set -e
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  echo "Run this script as ./build_nuwro.sh (do not source it)." >&2
+  return 1
+fi
 cd "$(dirname "${BASH_SOURCE[0]}")"
 HERE=$(pwd)
+# Load the UPS environment BEFORE set -e: global_vars.sh runs many UPS setups and
+# some return a non-zero status without anything being wrong.
 if [ -z "$SKIP_GLOBAL_VARS" ]; then source global_vars.sh; fi
+for t in g++ make git root-config; do
+  command -v "$t" > /dev/null || { echo "ERROR: $t not found (environment from global_vars.sh incomplete?)" >&2; exit 1; }
+done
+[ -n "$PYTHIA_FQ_DIR" ] || { echo "ERROR: Pythia6 (PYTHIA_FQ_DIR) not set up" >&2; exit 1; }
+echo "Using ROOT $(root-config --version), Pythia6 in $PYTHIA_FQ_DIR"
+set -e
 
 NUWRO_TAG=${NUWRO_TAG:-NuWro_25_11_1}
 

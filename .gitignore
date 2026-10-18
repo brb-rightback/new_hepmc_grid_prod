@@ -9,5 +9,6 @@ studies/
 ref/
 test_build/
 *.o
+full_prod_gibuu/
 # old
 NuWro_Production.wiki

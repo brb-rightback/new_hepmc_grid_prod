@@ -9,11 +9,11 @@
        * expected-lifetime includes ~1 h of GiBUU (200 events at Max=5000) -->
 
 <!DOCTYPE project [
-<!ENTITY release_reco1 "v08_00_00_90">
+<!ENTITY release_reco1 "v08_00_00_98">
 <!ENTITY file_type "overlay">
 <!ENTITY run_type "physics">
 <!ENTITY user "bbogart">
-<!ENTITY name "prodgibuu_BNB_numuCC_overlay_run4c">
+<!ENTITY name "prodgibuu_BNB_numuCC_overlay_run4c_test">
 <!ENTITY griddir "/pnfs/uboone/resilient/users/bbogart/hepmc_grid/gibuu_BNB_numuCC">
 <!ENTITY repo "/exp/uboone/data/users/bbogart/new_hepmc_grid_prod">
 ]>
@@ -32,7 +32,7 @@
   </larsoft>
 
   <check>1</check>
-  <copy>1</copy>
+  <copy>0</copy>
   <version>prod_&release_reco1;</version>
 
   <stage name="reco1">
@@ -57,12 +57,12 @@
     <bookdir>/pnfs/uboone/resilient/users/&user;/book/&release_reco1;/&name;/reco1</bookdir>
 
     <maxfilesperjob>1</maxfilesperjob>
-    <numjobs>10</numjobs>   <!-- start with a small test -->
+    <numjobs>100</numjobs>   <!-- start with a small test -->
     <memory>4000</memory>
     <disk>35GB</disk>
     <prestagefraction>0.99</prestagefraction>
     <datatier>reconstructed-2d</datatier>
-    <jobsub>--blacklist=UConn-HPC,Colorado,RAL,Lancaster --expected-lifetime=12h -e IFDH_CP_UNLINK_ON_ERROR=1 --subgroup=prod --append_condor_requirements='(TARGET.HAS_CVMFS_uboone_opensciencegrid_org==true)&amp;&amp;(TARGET.HAS_CVMFS_uboone_osgstorage_org==true)' -f &griddir;/hepmc_grid.cfg -f &griddir;/gibuu_grid.tar.gz -f &griddir;/hepmc_POT.meta</jobsub>
+    <jobsub>--blacklist=UConn-HPC,Colorado,RAL,Lancaster --expected-lifetime=24h -e IFDH_CP_UNLINK_ON_ERROR=1 --subgroup=prod --append_condor_requirements='(TARGET.HAS_CVMFS_uboone_opensciencegrid_org==true)&amp;&amp;(TARGET.HAS_CVMFS_uboone_osgstorage_org==true)' -f &griddir;/hepmc_grid.cfg -f &griddir;/gibuu_grid.tar.gz -f &griddir;/hepmc_POT.meta</jobsub>
     <jobsub_start>--subgroup=prod --expected-lifetime=8h --append_condor_requirements='(TARGET.HAS_CVMFS_uboone_opensciencegrid_org==true)' </jobsub_start>
   </stage>
 
