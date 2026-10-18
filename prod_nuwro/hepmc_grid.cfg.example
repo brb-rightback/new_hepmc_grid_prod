@@ -1,0 +1,18 @@
+# hepmc_grid.cfg for NuWro -- sourced by common/hepmc_grid_init.sh on the worker node.
+# Pass it with jobsub -f; the file name must stay hepmc_grid.cfg.
+
+HEPMC_GENERATOR=nuwro
+HEPMC_TARBALL=nuwro_grid.tar.gz
+HEPMC_NEVENTS_NEEDED=200             # >= largest event_count in the extunbiased SAM definition
+HEPMC_SEED_OFFSET=0                  # use a different offset from any GiBUU sample run at the same time
+HEPMC_MAX_ATTEMPTS=3
+HEPMC_RETRY_ON_FAILURE=1
+HEPMC_TIMEOUT=8h                     # per NuWro invocation (1e7 test events)
+HEPMC_CONVERTER_OPTS="--beam bnb"
+
+NUWRO_PARAMS=nuwro_BNB_numuCC_uboone.txt   # in params/ of the tarball
+NUWRO_TEST_EVENTS=10000000           # per job: channel fractions + max weights. Large on purpose (robustness over speed);
+                                     # measure the time on the first test jobs and adjust HEPMC_TIMEOUT / expected-lifetime
+# NUWRO_UPS_SETUP=/cvmfs/uboone.opensciencegrid.org/products/setup_uboone_mcc9.sh
+# NUWRO_UPS_PRODUCTS="root v6_28_12 -q e26:p3915:prof;pythia v6_4_28x -q e26:prof"
+# NUWRO_USE_VERTEX=0                 # 1 = NuWro geometry vertex instead of the TPC box

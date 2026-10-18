@@ -1,0 +1,88 @@
+diff --git a/src/chooser.h b/src/chooser.h
+index 471514e..372a3fa 100644
+--- a/src/chooser.h
++++ b/src/chooser.h
+@@ -4,6 +4,7 @@
+ #include <iostream>
+ #include <vector>
+ #include "params.h"
++#include "generatormt.h"
+ 
+ using namespace std;
+ 
+@@ -256,19 +257,28 @@ inline void chooser::report()
+ ////////////////////////////////////////////////////////////////////////
+ inline void chooser::calculate_counts(int Total)
+ {
+-    double total=1.0;
+-    for (int k = 0; k < N-1; k++)
+-    {  
++    // Draw the number of events per channel from a multinomial distribution with the
++    // channel cross-section fractions. The original code rounded frac*Total, which for
++    // small Total (e.g. a 200 event grid job) systematically removes or inflates rare
++    // channels (a 0.2% channel gets 0 events in every job).
++    for (int k = 0; k < N; k++)
++    {
+         proc[k].Ready=0;
+-        double frac=ratio(k);
+-        if(frac==0)
+-            proc[k].Desired=0;
+-        else
+-            proc[k].Desired = int(frac/total*Total+0.5);
+-        Total-=proc[k].Desired;
+-        total-=frac;
++        proc[k].Desired=0;
++    }
++    do_distrib();                // make sure Wacc matches the current W
++    int last = -1;               // last channel with nonzero cross section
++    for (int k = 0; k < N; k++)
++        if (proc[k].W > 0) last = k;
++    if (last < 0) return;
++    for (int i = 0; i < Total; i++)
++    {
++        double x = frandom() * proc[N-1].Wacc;
++        int k = 0;
++        while (k < last && x >= proc[k].Wacc)
++            k++;
++        proc[k].Desired++;
+     }
+-    proc[N-1].Desired=Total;
+ }
+ 
+ #endif
+diff --git a/src/nuwro.cc b/src/nuwro.cc
+index 8cc86e2..464a558 100755
+--- a/src/nuwro.cc
++++ b/src/nuwro.cc
+@@ -28,6 +28,23 @@
+ #include "kaskada7.h"
+ #include "sfevent.h"
+ #include "Analyser1.h"
++#include <ctime>
++
++// Pythia6 (used for hadronization) has its own RANMAR generator which NuWro never
++// seeded, so every NuWro process replayed the same Pythia random sequence (default
++// seed 19780503). Harmless for one long run, but correlates the hadronic final states
++// of many short grid jobs. Seed it from random_seed (RANMAR accepts 0..900000000);
++// MRPY(2)=0 forces re-initialization on the next PYR call.
++extern "C" {
++  extern struct { int mrpy[6]; double rrpy[100]; } pydatr_;
++}
++static void seed_pythia6(int random_seed)
++{
++	long s = random_seed > 1 ? random_seed : (long) time(NULL);
++	pydatr_.mrpy[0] = (int) (s % 900000000L);
++	pydatr_.mrpy[1] = 0;
++	cout << "Pythia6 random seed MRPY(1) = " << pydatr_.mrpy[0] << endl;
++}
+ #include "geomy.h"
+ #include "ff.h"
+ #include "hist.h"
+@@ -143,6 +160,7 @@ void NuWro::init (int argc, char **argv)
+ 	if(a.progress)
+ 		_progress.open(a.progress);
+ 	frandom_init(p.random_seed);
++	seed_pythia6(p.random_seed);
+ 
+ 	frame_bottom();
+ 

@@ -1,0 +1,164 @@
+#!/bin/bash
+#
+# hepmc_grid_init.sh -- generic <initsource> for "generate on the worker node, then
+# overlay" productions. Replaces nuwro_script.sh (which copied a pre-made hepmc file).
+#
+# It runs an event generator on the worker node, validates its output, retries if
+# needed, and converts the events to nuwro_input.hepmc, which HepMCFileGen
+# (prodhepmc_overlay_uboone.fcl) reads together with hepmc_POT.meta.
+#
+# The generator-specific part is a plugin, <generator>/generator.sh inside the tarball
+# (see prod_gibuu/generator.sh and prod_nuwro/generator.sh). A plugin defines:
+#   gen_setup                          check config/binaries, build the converter
+#   gen_units NEED ATTEMPT NEV NUNITS  how many "units" (GiBUU: runs, NuWro: events)
+#                                      to request in this attempt to get NEED more events
+#                                      (NEV events were made so far in NUNITS units)
+#   gen_run DIR SEED UNITS             run the generator in DIR; return 0 ok,
+#                                      1 failed but retrying with a new seed is fine,
+#                                      2 fatal
+#   gen_validate DIR SEED              check the output; print the number of events
+#   gen_convert OUT SEED DIR...        convert all attempts into OUT (shuffled)
+#   gen_info                           extra key=value fields for the summary line
+#
+# This file is SOURCED by condor_lar.sh after the larsoft setup and before the SAM
+# consumer starts. Therefore:
+#   * failures use `return <n>` (never `exit`); condor_lar.sh exits with that status
+#   * no `set -e`, and nothing here changes the caller's environment except the
+#     variables/functions prefixed HEPMC_/hepmc_/gen_ (generators run in subshells)
+#   * the overlay input file is not known yet, so we always generate
+#     HEPMC_NEVENTS_NEEDED events (>= the largest file in the SAM definition)
+#
+# Files passed with jobsub -f (found in the job directory or $CONDOR_DIR_INPUT):
+#   hepmc_grid.cfg     configuration (see prod_*/hepmc_grid.cfg.example)
+#   hepmc_POT.meta     POT_Per_Event=... for this sample
+#   $HEPMC_TARBALL     generator + plugin + converter source (build/make_tarball_*.sh)
+#
+# Everything left in the job directory is copied to the log directory by condor_lar.sh,
+# so the generator runs in a scratch subdirectory that is removed at the end. The
+# HEPMC_SUMMARY lines in the job log are the bookkeeping record of the production
+# (seeds, events, units); validation/check_production.py reads them.
+
+hepmc_log() { echo "HEPMC_GRID: $*"; }
+
+hepmc_fail() {
+  hepmc_log "FATAL: $1"
+  echo "HEPMC_SUMMARY status=FAILED generator=${HEPMC_GENERATOR:-unknown} reason=\"$1\" seed_base=${HEPMC_SEED_BASE:-unset} jobid=${JOBSUBJOBID:-unknown}"
+  cd "$HEPMC_JOBDIR" 2>/dev/null
+  return 1
+}
+
+hepmc_find() {  # locate a -f input file
+  if [ -f "$HEPMC_JOBDIR/$1" ]; then echo "$HEPMC_JOBDIR/$1"
+  elif [ -n "$CONDOR_DIR_INPUT" ] && [ -f "$CONDOR_DIR_INPUT/$1" ]; then echo "$CONDOR_DIR_INPUT/$1"
+  fi
+}
+
+# ceil((need + z*sqrt(need) + 1) / rate), at least 1. Used by plugins whose yield per
+# unit fluctuates (Poisson), e.g. GiBUU events per run.
+hepmc_poisson_units() {
+  awk -v n="$1" -v r="$2" -v z="$3" 'BEGIN{ if (n<=0) {print 0; exit}
+    x=(n + z*sqrt(n) + 1)/r; u=(x==int(x))?x:int(x)+1; if (u<1) u=1; print u }'
+}
+
+hepmc_main() {
+  HEPMC_JOBDIR=$PWD
+  hepmc_log "starting on $(hostname) at $(date -u), CLUSTER=$CLUSTER PROCESS=$PROCESS JOBSUBJOBID=$JOBSUBJOBID"
+
+  local cfg; cfg=$(hepmc_find hepmc_grid.cfg)
+  [ -n "$cfg" ] || { hepmc_fail "hepmc_grid.cfg not found"; return 1; }
+  # shellcheck disable=SC1090
+  source "$cfg"
+  local v
+  for v in HEPMC_GENERATOR HEPMC_TARBALL HEPMC_NEVENTS_NEEDED HEPMC_SEED_OFFSET HEPMC_MAX_ATTEMPTS HEPMC_TIMEOUT; do
+    [ -n "${!v}" ] || { hepmc_fail "config variable $v not set"; return 1; }
+  done
+  : "${HEPMC_RETRY_ON_FAILURE:=1}"
+  : "${HEPMC_CONVERTER_OPTS:=}"
+
+  local pot_meta; pot_meta=$(hepmc_find hepmc_POT.meta)
+  [ -n "$pot_meta" ] || { hepmc_fail "hepmc_POT.meta not found"; return 1; }
+  grep -q "^POT_Per_Event=" "$pot_meta" || { hepmc_fail "hepmc_POT.meta has no POT_Per_Event= line"; return 1; }
+  [ "$pot_meta" = "$HEPMC_JOBDIR/hepmc_POT.meta" ] || cp "$pot_meta" "$HEPMC_JOBDIR/"
+
+  # ------------------------------------------------------------------ seeds
+  # Every generator gets seeds in [1, 942438977]: GiBUU's RANMAR only distinguishes
+  # seeds modulo 30082*31329 = 942438978 (NuWro's MT19937 takes any 32 bit value; 0
+  # and 1 are special there, which this layout never produces).
+  #   seed = 1 + ((HEPMC_SEED_OFFSET + CLUSTER) mod 9000) * 100000 + PROCESS * 10 + attempt
+  # Unique for PROCESS < 10000 and attempt < 10 as long as the clusters of a production
+  # differ mod 9000. CLUSTER is included because makeup/recovery submissions restart
+  # PROCESS at 0. Uniqueness over the production must still be checked afterwards
+  # (validation/check_production.py) -- equal seeds give identical events.
+  [ -n "$CLUSTER" ] && [ -n "$PROCESS" ] || { hepmc_fail "CLUSTER/PROCESS not set"; return 1; }
+  [ "$PROCESS" -lt 10000 ] || { hepmc_fail "PROCESS >= 10000 breaks the seed layout"; return 1; }
+  [ "$HEPMC_MAX_ATTEMPTS" -ge 1 ] && [ "$HEPMC_MAX_ATTEMPTS" -lt 10 ] || { hepmc_fail "HEPMC_MAX_ATTEMPTS must be 1..9"; return 1; }
+  HEPMC_SEED_BASE=$(( 1 + ((HEPMC_SEED_OFFSET + CLUSTER) % 9000) * 100000 + PROCESS * 10 ))
+
+  # ------------------------------------------------------------------ unpack
+  local tarball; tarball=$(hepmc_find "$HEPMC_TARBALL")
+  [ -n "$tarball" ] || { hepmc_fail "tarball $HEPMC_TARBALL not found"; return 1; }
+  HEPMC_WORK=$HEPMC_JOBDIR/hepmc_work
+  rm -rf "$HEPMC_WORK"
+  mkdir -p "$HEPMC_WORK" && tar -xzf "$tarball" -C "$HEPMC_WORK" || { hepmc_fail "cannot unpack $tarball"; return 1; }
+  [ -f "$HEPMC_WORK/generator.sh" ] || { hepmc_fail "generator.sh missing from tarball"; return 1; }
+  # shellcheck disable=SC1090
+  source "$HEPMC_WORK/generator.sh"
+  [ "$GEN_NAME" = "$HEPMC_GENERATOR" ] || { hepmc_fail "tarball contains generator '$GEN_NAME', config asks for '$HEPMC_GENERATOR'"; return 1; }
+  gen_setup || { hepmc_fail "gen_setup failed"; return 1; }
+
+  # ------------------------------------------------------------------ generate
+  local have=0 units_done=0 attempt=0 failures=0 dirs=()
+  while [ "$have" -lt "$HEPMC_NEVENTS_NEEDED" ]; do
+    [ "$attempt" -lt "$HEPMC_MAX_ATTEMPTS" ] || { hepmc_fail "only $have of $HEPMC_NEVENTS_NEEDED events after $attempt attempts"; return 1; }
+    local seed=$(( HEPMC_SEED_BASE + attempt ))
+    local need=$(( HEPMC_NEVENTS_NEEDED - have ))
+    local units; units=$(gen_units "$need" "$attempt" "$have" "$units_done")
+    [ -n "$units" ] && [ "$units" -ge 1 ] || { hepmc_fail "gen_units returned '$units'"; return 1; }
+    local dir=$HEPMC_WORK/attempt$attempt
+    mkdir -p "$dir"
+    hepmc_log "attempt $attempt: seed=$seed units=$units (have $have, need $HEPMC_NEVENTS_NEEDED)"
+
+    local t0; t0=$(date +%s)
+    gen_run "$dir" "$seed" "$units"
+    local rc=$?
+    local dt=$(( $(date +%s) - t0 ))
+    hepmc_log "attempt $attempt: generator returned $rc after $dt s"
+    [ -f "$dir/generator.log" ] && tail -n 200 "$dir/generator.log" > "$HEPMC_JOBDIR/hepmc_attempt${attempt}_tail.log"
+
+    if [ "$rc" -ne 0 ]; then
+      echo "HEPMC_SUMMARY attempt=$attempt status=GENERATOR_FAILED rc=$rc seed=$seed units=$units seconds=$dt jobid=${JOBSUBJOBID:-unknown}"
+      if [ "$rc" -eq 1 ] && [ "$HEPMC_RETRY_ON_FAILURE" = "1" ]; then
+        failures=$(( failures + 1 ))
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
+      hepmc_fail "generator failed (rc=$rc) in attempt $attempt"; return 1
+    fi
+
+    local n; n=$(gen_validate "$dir" "$seed")
+    local vrc=$?
+    [ "$vrc" -eq 0 ] && [ -n "$n" ] || { hepmc_fail "validation failed in attempt $attempt: $n"; return 1; }
+    echo "HEPMC_SUMMARY attempt=$attempt status=OK seed=$seed units=$units events=$n seconds=$dt $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
+    dirs+=("$dir")
+    have=$(( have + n ))
+    units_done=$(( units_done + units ))
+    attempt=$(( attempt + 1 ))
+  done
+
+  # ------------------------------------------------------------------ convert
+  ( cd "$HEPMC_JOBDIR" && gen_convert nuwro_input.hepmc "$HEPMC_SEED_BASE" "${dirs[@]}" ) \
+    || { hepmc_fail "conversion failed"; return 1; }
+  local nconv; nconv=$(cat "$HEPMC_JOBDIR/eventcount.meta" 2>/dev/null)
+  [ "$nconv" = "$have" ] && [ "$nconv" -ge "$HEPMC_NEVENTS_NEEDED" ] \
+    || { hepmc_fail "converted '$nconv' events, expected $have (>= $HEPMC_NEVENTS_NEEDED)"; return 1; }
+  local nlines; nlines=$(awk 'NF==2' "$HEPMC_JOBDIR/nuwro_input.hepmc" | wc -l)
+  [ "$nlines" -eq "$nconv" ] || { hepmc_fail "nuwro_input.hepmc has $nlines event headers, expected $nconv"; return 1; }
+
+  echo "HEPMC_SUMMARY status=OK generator=$HEPMC_GENERATOR seed_base=$HEPMC_SEED_BASE attempts=$attempt failed_attempts=$failures units=$units_done events=$have converted=$nconv needed=$HEPMC_NEVENTS_NEEDED $(gen_info) jobid=${JOBSUBJOBID:-unknown}"
+
+  rm -rf "$HEPMC_WORK"
+  cd "$HEPMC_JOBDIR"
+  return 0
+}
+
+hepmc_main

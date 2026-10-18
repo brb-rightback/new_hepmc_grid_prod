@@ -1,0 +1,6 @@
+# prodhepmc_overlay_uboone.fcl for extunbiased files with up to 200 events.
+# HepMCFileGen throws once it has produced MaxEvents events (default 100), so the
+# limit must be at least the largest event_count of the input SAM definition.
+#include "prodhepmc_overlay_uboone.fcl"
+
+physics.producers.generator.MaxEvents: 200

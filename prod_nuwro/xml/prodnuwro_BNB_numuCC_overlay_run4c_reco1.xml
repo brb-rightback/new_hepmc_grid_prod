@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+
+<!-- NuWro generated on the worker node + overlay + reco1.
+     Differences from v08_00_00_90/prod_hepmc/.../prodnuwro_BNB_numuCC_overlay_run4c_reco1_8000.xml:
+       * initsource: common/hepmc_grid_init.sh (runs NuWro, replaces nuwro_script.sh)
+       * -f hepmc_grid.cfg, nuwro_grid.tar.gz, hepmc_POT.meta (no hepmc_files.list any more)
+       * prodhepmc_overlay_uboone_200.fcl (MaxEvents 200) via <fcldir>
+       * the input definition must only contain files with event_count <= HEPMC_NEVENTS_NEEDED
+       * expected-lifetime includes NuWro (1e7 test events + 200 events per job; to be measured) -->
+
+<!DOCTYPE project [
+<!ENTITY release_reco1 "v08_00_00_90">
+<!ENTITY file_type "overlay">
+<!ENTITY run_type "physics">
+<!ENTITY user "bbogart">
+<!ENTITY name "prodnuwro_BNB_numuCC_overlay_run4c">
+<!ENTITY griddir "/pnfs/uboone/resilient/users/bbogart/hepmc_grid/nuwro_BNB_numuCC">
+<!ENTITY repo "/exp/uboone/data/users/bbogart/new_hepmc_grid_prod">
+]>
+
+<job>
+
+<project name="&name;_reco1">
+
+  <numevents>-1</numevents>
+  <os>SL7</os>
+  <resource>DEDICATED,OPPORTUNISTIC,OFFSITE</resource>
+
+  <larsoft>
+    <tag>&release_reco1;</tag>
+    <qual>e17:prof</qual>
+  </larsoft>
+
+  <check>1</check>
+  <copy>1</copy>
+  <version>prod_&release_reco1;</version>
+
+  <stage name="reco1">
+
+    <!-- e.g. samweb create-definition <name>_200 "defname:<extunbiased def> and event_count <= 200" -->
+    <inputdef>bbogart_prod_extunbiased_swizzle_crt_inclusive_v7c_goodruns_mcc9_run4c_200</inputdef>
+
+    <initsource>&repo;/common/hepmc_grid_init.sh</initsource>
+    <fcldir>&repo;/larsoft/fcl</fcldir>
+    <fcl>prodhepmc_overlay_uboone_200.fcl</fcl>
+
+    <fcl>wirecell_g4_uboone.fcl</fcl>
+    <fcl>wirecell_detsim_overlay_uboone.fcl</fcl>
+    <fcl>standard_overlay_uboone.fcl</fcl>
+    <fcl>reco_uboone_mcc9_8_driver_overlay_stage1a.fcl</fcl>
+    <fcl>reco_uboone_mcc9_8_driver_overlay_stage1b.fcl</fcl>
+    <fcl>reco_uboone_mcc9_8_driver_overlay_stage1c.fcl</fcl>
+
+    <outdir>/pnfs/uboone/scratch/users/&user;/&release_reco1;/&name;/reco1</outdir>
+    <logdir>/pnfs/uboone/scratch/users/&user;/&release_reco1;/&name;/reco1</logdir>
+    <workdir>/pnfs/uboone/resilient/users/&user;/work/&release_reco1;/&name;/reco1</workdir>
+    <bookdir>/pnfs/uboone/resilient/users/&user;/book/&release_reco1;/&name;/reco1</bookdir>
+
+    <maxfilesperjob>1</maxfilesperjob>
+    <numjobs>10</numjobs>   <!-- start with a small test -->
+    <memory>4000</memory>
+    <disk>35GB</disk>
+    <prestagefraction>0.99</prestagefraction>
+    <datatier>reconstructed-2d</datatier>
+    <jobsub>--blacklist=UConn-HPC,Colorado,RAL,Lancaster --expected-lifetime=12h -e IFDH_CP_UNLINK_ON_ERROR=1 --subgroup=prod --append_condor_requirements='(TARGET.HAS_CVMFS_uboone_opensciencegrid_org==true)&amp;&amp;(TARGET.HAS_CVMFS_uboone_osgstorage_org==true)' -f &griddir;/hepmc_grid.cfg -f &griddir;/nuwro_grid.tar.gz -f &griddir;/hepmc_POT.meta</jobsub>
+    <jobsub_start>--subgroup=prod --expected-lifetime=8h --append_condor_requirements='(TARGET.HAS_CVMFS_uboone_opensciencegrid_org==true)' </jobsub_start>
+  </stage>
+
+  <filetype>&file_type;</filetype>
+  <runtype>&run_type;</runtype>
+
+</project>
+
+</job>

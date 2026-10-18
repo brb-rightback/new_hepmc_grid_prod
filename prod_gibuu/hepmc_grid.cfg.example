@@ -1,0 +1,18 @@
+# hepmc_grid.cfg for GiBUU -- sourced by common/hepmc_grid_init.sh on the worker node.
+# Pass it with jobsub -f; the file name must stay hepmc_grid.cfg.
+
+HEPMC_GENERATOR=gibuu
+HEPMC_TARBALL=gibuu_grid.tar.gz      # also passed with -f (or found in $CONDOR_DIR_INPUT)
+HEPMC_NEVENTS_NEEDED=200             # >= largest event_count in the extunbiased SAM definition
+HEPMC_SEED_OFFSET=0                  # change per production/sample to use a different seed block
+HEPMC_MAX_ATTEMPTS=4                 # first attempt + retries
+HEPMC_RETRY_ON_FAILURE=1             # redo a failed GiBUU attempt (e.g. weight > Max) with a new seed
+HEPMC_TIMEOUT=6h                     # per GiBUU invocation
+HEPMC_CONVERTER_OPTS="--beam bnb"    # spill timing; vertex box defaults to the TPC active volume
+
+GIBUU_JOBCARD=gibuu_BNB_numuCC.job   # in jobcards/ of the tarball
+GIBUU_EQUALWEIGHTS_MAX=5000          # must equal the card; identical for every job of a sample
+GIBUU_NUM_ENSEMBLES=2000             # must equal the card; identical for every job of a sample
+GIBUU_A=40
+GIBUU_EVENTS_PER_RUN=12.9            # gibuu_BNB_numuCC.job, Max=5000, 2000 ens, 2015 flux (README); re-measure per card/flux
+GIBUU_Z=2                            # first attempt asks for need + 2 sigma -> ~98% need no retry
