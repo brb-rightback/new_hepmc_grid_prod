@@ -1,0 +1,13 @@
+# builds and downloads
+build/GiBUU/
+build/nuwro/
+build/*.log
+*.tar.gz
+# local work
+tests/
+studies/
+ref/
+test_build/
+*.o
+# old
+NuWro_Production.wiki
