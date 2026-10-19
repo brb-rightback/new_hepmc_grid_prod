@@ -1,0 +1,31 @@
+# Channel table for HEPMC_GENERATOR=gibuu_mix (prod_gibuu/generator_gibuu_mix.sh):
+# MicroBooNE BNB numu, numubar, nue, nuebar x CC, NC on argon.
+#
+# Columns:
+#   name  process_ID  flavor_ID  nuExp  nu_pdg  ccnc  equalWeights_Max  numEnsembles  sigma  flux  enrich
+# sigma  flux-averaged cross section, 1e-38 cm2 per nucleon, for gibuu_BNB_numuCC.job physics
+#        (GiBUU 2025 patch 5) and the MCC9 flux tables (data/flux/BNB_*_uboone_mcc9.dat)
+# flux   integral of that flux table [nu/POT/cm2] (make_flux_table.py normalisation)
+# enrich sampling enhancement e_c (1 = natural mixture, all event weights 1); a channel with
+#        e_c != 1 is drawn e_c times more often and its events get weight p_c/q_c
+#
+# Max / numEnsembles only change the speed (the mixture is set by the drawn counts):
+#   Max >= ~3x the largest trial weight seen (CC tails reach ~1600 in 5e6 trials, NC 539);
+#   few ensembles for the rare channels so that their GiBUU runs are short.
+#
+# sigma sources (2026-10-19):
+#   numuCC    0.8056 +- 0.0053  100-job grid production (200 time steps)
+#   numuNC    0.2884 +- 0.0024  weighted calibrations 0.2882+-0.0025 (8 jobs) and 0.2898+-0.0072 (calmix)
+#   others    weighted calibration, 6 runs x 500 ensembles each, numTimeSteps=0
+#             (numTimeSteps does not change the inclusive cross section; checked on numu CC/NC)
+#   errors:   numubarCC 2.9%  numubarNC 5.7%  nueCC 1.8%  nueNC 2.5%  nuebarCC 2.5%  nuebarNC 2.5%
+#
+# name     proc flav nuExp  pdg ccnc   Max  nEns   sigma   flux        enrich
+numuCC       2   2   21     14   0   5000  2000   0.8056  7.3762e-10  1
+numuNC       3   2   21     14   1   2000  2000   0.2884  7.3762e-10  1
+numubarCC   -2   2   22    -14   0   2000   500   0.1013  4.5589e-11  1
+numubarNC   -3   2   22    -14   1   2000   200   0.0566  4.5589e-11  1
+nueCC        2   1   19     12   0   5000   200   0.9433  3.9779e-12  1
+nueNC        3   1   19     12   1   2000   200   0.2987  3.9779e-12  1
+nuebarCC    -2   1   20    -12   0   5000   200   0.3010  4.0255e-13  1
+nuebarNC    -3   1   20    -12   1   2000   200   0.1268  4.0255e-13  1

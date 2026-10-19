@@ -119,9 +119,61 @@ validation/check_production.py <logdir> --hepmc --flux data/flux/BNB_numu_uboone
 | memory | 0.47 / 0.56 / 0.74 GB at 1000 / 2000 / 4000 ensembles |
 | runs for 200 events | 18 runs at 12.9/run (default `GIBUU_Z=2`) → ~98 % need one attempt, ~53 min; 19 → 99.8 % |
 
+**NC (`gibuu_BNB_numuNC.job`, `prod_gibuu/hepmc_grid_numuNC.cfg.example`):**
+- σ̄_NC = 0.288 ± 0.003 ×10⁻³⁸ cm²/nucleon (patch 5, MCC9 flux), about 36% of CC.
+- At Max = 5000 that is 4.6 events/run: about 50 runs, ~2.4 h of GiBUU per 200-event job.
+- POT_Per_Event ≈ 9.05×10¹⁵ (provisional, from the calibration).
+- The NC trial-weight tail is far lighter than CC's: largest 539 in 4.8M trials (NC elastic), and 217 in a patch-5 calibration with 3×10⁵ events.
+- Max could therefore be lowered to save time (yield and time scale as 1/Max): Max = 2000 → 11.5 events/run, ~20 runs, ~1 h; Max = 1000 → 23 events/run, ~10 runs, ~30 min.
+- Changing Max needs `equalWeights_Max` in the card, `GIBUU_EQUALWEIGHTS_MAX` and `GIBUU_EVENTS_PER_RUN` in the config to change together (the plugin checks the card against the config).
+
 About 90% of the time goes into evaluating cross sections for every trial nucleon. FSI transport is only ~10%, and only ~1 in 6000 trials is accepted at Max=5000. More ensembles therefore do **not** help; **lowering Max** would (time ∝ Max), but the CCQE weight tail is long:
 - trial weights above 1000 occur about once per 4×10⁵–6×10⁵ trials
 - the largest seen is ~1600
+
+## All flavours and currents in one sample (`HEPMC_GENERATOR=gibuu_mix`)
+
+GiBUU makes one flavour and one current per invocation. `prod_gibuu/generator_gibuu_mix.sh` combines the 8 BNB channels (νμ, ν̄μ, νe, ν̄e × CC, NC) into one sample in which all events have the same weight. It uses the same tarball as single-channel samples.
+
+**Per job:**
+1. Read the channel table `prod_gibuu/mix/bnb_all.channels`. Per channel it holds:
+   - the GiBUU settings
+   - σ_c (calibrated, 10⁻³⁸ cm²/nucleon)
+   - Φ_c (integral of the MCC9 flux table, ν/POT/cm²)
+   - Max and ensembles
+   - an enrichment factor e_c
+2. Draw the number of events per channel, n_c, from a multinomial distribution over `HEPMC_NEVENTS_NEEDED`, with probabilities q_c = Φ_c σ_c e_c / Σ Φσe (C++ mt19937_64, seeded by the job).
+3. Run one GiBUU invocation per channel with n_c > 0:
+   - The channel card is `GIBUU_JOBCARD` with only `process_ID`, `flavor_ID`, `nuExp`, `equalWeights_Max` and `numEnsembles` changed, so all channels share the same physics settings.
+   - Runs are sized so that the invocation falls short with probability < `GIBUU_MIX_EPS`.
+   - Channel k uses seed slot k; slots 8 and 9 are for retries.
+4. The converter keeps exactly n_c random events per channel (`--groups`), so the extra events of whole GiBUU runs never enter the sample. It writes the event weight w_c = p_c/q_c, which is 1 for the natural mixture (e_c = 1).
+
+**Normalisation:** a single `POT_Per_Event = 1 / (N_nucleons Σ_c Φ_c σ_c)`, from `prod_gibuu/mix/pot_per_event.sh TABLE`. The plugin refuses to run if `hepmc_POT.meta` differs from it by more than 0.5%. For `bnb_all.channels` it is 2.349×10¹⁵.
+
+**Calibration** (patch 5, MCC9 fluxes, run4c card):
+
+| channel | σ (×10⁻³⁸ cm²/nucleon) | share | largest trial weight seen | Max / ensembles |
+|---|---|---|---|---|
+| νμ CC | 0.8056 ± 0.7% | 72.5% | 1592 | 5000 / 2000 |
+| νμ NC | 0.2884 ± 0.8% | 26.0% | 539 | 2000 / 2000 |
+| ν̄μ CC | 0.1013 ± 2.9% | 0.56% | 266 | 2000 / 500 |
+| ν̄μ NC | 0.0566 ± 5.7% | 0.31% | 230 | 2000 / 200 |
+| νe CC | 0.9433 ± 1.8% | 0.46% | 892 | 5000 / 200 |
+| νe NC | 0.2987 ± 2.5% | 0.15% | 224 | 2000 / 200 |
+| ν̄e CC | 0.3010 ± 2.5% | 0.015% | 723 | 5000 / 200 |
+| ν̄e NC | 0.1268 ± 2.5% | 0.006% | 269 | 2000 / 200 |
+
+Max and ensembles only change the speed; the mixture is set by the drawn counts. Inclusive cross sections were calibrated with `numTimeSteps=0`, which leaves σ unchanged (checked on νμ CC and NC) and is ~3× faster.
+
+**After a production,** `check_production.py` prints, per channel:
+- events drawn and their fraction
+- invocations and failures
+- σ measured from first invocations vs the table
+
+If a ratio σ_meas/σ_table differs significantly from 1, weight that channel's events by it (POT per event unchanged), or update the table for the next production.
+
+**Enrichment:** set e_c > 1 in a copy of the table to oversample a channel (e.g. νe CC). Its events then carry the constant weight p_c/q_c < 1. The normalisation is unchanged.
 
 ## Physics configuration
 
@@ -130,8 +182,9 @@ About 90% of the time goes into evaluating cross sections for every trial nucleo
 
 ## Flux
 
-All three consumers use one table, `data/flux/BNB_numu_uboone_mcc9.dat`:
-- GiBUU: `make_tarball_gibuu.sh` installs it as `buuinput/neutrino/BNB_numu.dat`; `GIBUU_BNB_NUMU_FLUX` selects another file, `none` keeps GiBUU's
+All consumers use the same tables, `data/flux/BNB_{numu,numubar,nue,nuebar}_uboone_mcc9.dat`:
+- GiBUU: `make_tarball_gibuu.sh` installs all four as `buuinput/neutrino/BNB_<flavour>.dat`. `GIBUU_BNB_FLUX_DIR` selects another directory; `none` keeps GiBUU's files.
+- the channel table `prod_gibuu/mix/bnb_all.channels`: its flux column holds the integrals of these tables
 - NuWro: `prod_nuwro/params/make_nuwro_beam.sh` turns it into `beam_BNB_numu_uboone.txt`
 - the POT normalisation: `check_production.py --flux`
 
@@ -143,4 +196,4 @@ Other flux files:
 - GiBUU 2025 patch 5 ships a different `BNB_numu.dat` ("B. Bogart, UMich, April 2026", ⟨E⟩ = 0.744 vs 0.823 GeV, arbitrary units). With patch 5 and the run4c card, σ̄ is 0.738 ± 0.010 ×10⁻³⁸ cm² with it, vs 0.811 ± 0.007 with the MicroBooNE shape.
 - The other code changes in patch 5 do not move σ̄.
 
-To switch fluxes, regenerate the table (`make_flux_table.py --hist ...`) and the NuWro beam file, then remeasure σ̄, `GIBUU_EVENTS_PER_RUN` and `POT_Per_Event`.
+To switch fluxes, regenerate the tables (`make_flux_table.py --hist hEnumu_cv` etc.), the NuWro beam file and the flux column of the channel table. Then remeasure σ̄, `GIBUU_EVENTS_PER_RUN` and `POT_Per_Event`.

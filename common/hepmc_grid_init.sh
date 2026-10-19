@@ -7,8 +7,9 @@
 # needed, and converts the events to nuwro_input.hepmc, which HepMCFileGen
 # (prodhepmc_overlay_uboone.fcl) reads together with hepmc_POT.meta.
 #
-# The generator-specific part is a plugin, <generator>/generator.sh inside the tarball
-# (see prod_gibuu/generator.sh and prod_nuwro/generator.sh). A plugin defines:
+# The generator-specific part is a plugin inside the tarball: generator_<HEPMC_GENERATOR>.sh
+# if present, otherwise generator.sh (see prod_gibuu/generator.sh, prod_gibuu/generator_gibuu_mix.sh
+# and prod_nuwro/generator.sh). A plugin defines:
 #   gen_setup                          check config/binaries, build the converter
 #   gen_units NEED ATTEMPT NEV NUNITS  how many "units" (GiBUU: runs, NuWro: events)
 #                                      to request in this attempt to get NEED more events
@@ -63,6 +64,14 @@ hepmc_find() {  # locate a -f input file
 
 # ceil((need + z*sqrt(need) + 1) / rate), at least 1. Used by plugins whose yield per
 # unit fluctuates (Poisson), e.g. GiBUU events per run.
+# hepmc_seed SLOT: the job's seed for slot 0..9. hepmc_grid_init.sh gives attempt N slot N;
+# a plugin that runs several generator invocations per attempt (gibuu_mix) takes its
+# seeds from here so that every invocation in the job has its own seed.
+hepmc_seed() {
+  [ "$1" -ge 0 ] && [ "$1" -lt 10 ] || { echo "hepmc_seed: slot $1 outside 0..9" >&2; return 1; }
+  echo $(( HEPMC_SEED_BASE + $1 ))
+}
+
 hepmc_poisson_units() {
   awk -v n="$1" -v r="$2" -v z="$3" 'BEGIN{ if (n<=0) {print 0; exit}
     x=(n + z*sqrt(n) + 1)/r; u=(x==int(x))?x:int(x)+1; if (u<1) u=1; print u }'
@@ -108,9 +117,11 @@ hepmc_main() {
   HEPMC_WORK=$HEPMC_JOBDIR/hepmc_work
   rm -rf "$HEPMC_WORK"
   mkdir -p "$HEPMC_WORK" && tar -xzf "$tarball" -C "$HEPMC_WORK" || { hepmc_fail "cannot unpack $tarball"; return 1; }
-  [ -f "$HEPMC_WORK/generator.sh" ] || { hepmc_fail "generator.sh missing from tarball"; return 1; }
+  local plugin=$HEPMC_WORK/generator_${HEPMC_GENERATOR}.sh
+  [ -f "$plugin" ] || plugin=$HEPMC_WORK/generator.sh
+  [ -f "$plugin" ] || { hepmc_fail "no generator plugin for '$HEPMC_GENERATOR' in the tarball"; return 1; }
   # shellcheck disable=SC1090
-  source "$HEPMC_WORK/generator.sh"
+  source "$plugin"
   [ "$GEN_NAME" = "$HEPMC_GENERATOR" ] || { hepmc_fail "tarball contains generator '$GEN_NAME', config asks for '$HEPMC_GENERATOR'"; return 1; }
   gen_setup || { hepmc_fail "gen_setup failed"; return 1; }
 

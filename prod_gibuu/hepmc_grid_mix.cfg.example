@@ -1,0 +1,19 @@
+# hepmc_grid.cfg for a GiBUU all-flavour/all-current mixture -- sourced by
+# common/hepmc_grid_init.sh on the worker node (prod_gibuu/generator_gibuu_mix.sh).
+# Pass it with jobsub -f; the file name must stay hepmc_grid.cfg.
+
+HEPMC_GENERATOR=gibuu_mix
+HEPMC_TARBALL=gibuu_grid.tar.gz      # the same tarball as for single-channel GiBUU samples
+HEPMC_NEVENTS_NEEDED=200             # >= largest event_count in the extunbiased SAM definition
+HEPMC_SEED_OFFSET=2250               # mixture: shifted from the CC (0) and NC (4500) samples
+HEPMC_MAX_ATTEMPTS=1                 # required: retries happen per channel inside the plugin
+HEPMC_RETRY_ON_FAILURE=1
+HEPMC_TIMEOUT=6h                     # per GiBUU invocation
+HEPMC_CONVERTER_OPTS="--beam bnb"
+
+GIBUU_JOBCARD=gibuu_BNB_numuCC.job   # base card; the plugin changes only process_ID, flavor_ID,
+                                     # nuExp, equalWeights_Max and numEnsembles per channel
+GIBUU_MIX_CHANNELS=bnb_all.channels  # in mix/ of the tarball: sigma, flux, Max, ensembles, enrichment
+GIBUU_A=40
+GIBUU_MIX_EPS=1e-3                   # per-channel probability that the first GiBUU invocation falls short
+# hepmc_POT.meta must hold POT_Per_Event from prod_gibuu/mix/pot_per_event.sh (checked to 0.5%)

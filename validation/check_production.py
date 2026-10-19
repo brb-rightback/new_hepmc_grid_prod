@@ -18,6 +18,8 @@ and then
   * with --hepmc, fingerprints the events of every nuwro_input.hepmc and reports
     truth events that appear in more than one job
   * summarises jobs, attempts, retries and failures
+  * gibuu_mix: drawn channel fractions, per-channel cross sections measured by the
+    production vs the channel table, retries and failures per channel
   * GiBUU: estimates the flux-averaged cross section and, with --flux, the POT per
     event for hepmc_POT.meta. First attempts only when their event counts are known
     (their run count is fixed before any event is seen, so no stopping-rule bias);
@@ -151,6 +153,53 @@ def fingerprints(text):
         i += 1 + n
 
 
+def mixture_report(mix, channels, a):
+    """gibuu_mix: drawn channel fractions vs the table, measured sigma_c vs the table."""
+    tables = {d.get('table') for d in mix}
+    pots = {d.get('pot_per_event') for d in mix}
+    print(f"GiBUU mixture: {len(mix)} jobs, channel table(s) {sorted(tables)}, POT_Per_Event {sorted(pots)}")
+    if len(tables) > 1 or len(pots) > 1:
+        print("ERROR: more than one channel table / normalisation in one sample")
+    drawn = collections.Counter()
+    for d in mix:
+        for item in d.get('counts', '').split(','):
+            if ':' in item:
+                name, n = item.split(':')
+                drawn[name] += int(n)
+    ntot = sum(drawn.values())
+    stats = collections.defaultdict(lambda: {'inv': 0, 'fail': 0, 'ev0': 0, 'runs0': 0, 'w': None, 'sig': None})
+    good = {d.get('jobid') for d in mix}      # only jobs that delivered a sample
+    nretry = collections.Counter((d.get('jobid'), d['channel']) for d in channels if d.get('jobid') in good)
+    print(f"  channel invocations in successful jobs: {sum(nretry.values())}, "
+          f"of which retries: {sum(n - 1 for n in nretry.values())}")
+    for d in channels:
+        if d.get('jobid') not in good:
+            continue
+        st = stats[d['channel']]
+        st['inv'] += 1
+        if d.get('status') != 'OK':
+            st['fail'] += 1
+            continue
+        if d.get('invocation') == '0':     # run count fixed by the drawn count only: unbiased
+            st['ev0'] += int(d['events'])
+            st['runs0'] += int(d['runs'])
+            st['w'] = float(d['gibuu_weight'])
+            st['sig'] = float(d['sigma_table'])
+    # expected fractions from the table sigma (the draw used q_c = Phi sigma e / sum)
+    print(f"  {'channel':10s} {'drawn':>8s} {'frac':>9s} {'invoc':>6s} {'fail':>5s} "
+          f"{'sigma_meas':>12s} {'sigma_table':>11s} {'meas/table':>14s}")
+    for name in drawn:
+        st = stats[name]
+        line = f"  {name:10s} {drawn[name]:8d} {drawn[name] / ntot:9.5f} {st['inv']:6d} {st['fail']:5d}"
+        if st['runs0'] and st['ev0']:
+            sm = st['ev0'] * st['w'] / st['runs0']
+            r = sm / st['sig']
+            line += f" {sm:12.5f} {st['sig']:11.5f} {r:8.4f}+-{r / math.sqrt(st['ev0']):.4f}"
+        print(line)
+    print("  sigma_meas uses first invocations only. If a ratio differs from 1, weight that channel's")
+    print("  events by sigma_meas/sigma_table (POT_Per_Event unchanged), or update the table.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('logdirs', nargs='+')
@@ -164,6 +213,7 @@ def main():
     seeds = collections.defaultdict(set)
     jobs_ok, jobs_failed, fail_reasons = {}, {}, collections.Counter()
     attempts = []
+    channels = []              # gibuu_mix invocation records
     hepmc = []                 # (jobid, text)
     nsources = nrecon = nnothing = 0
     for job in jobs_in(a.logdirs):
@@ -178,7 +228,11 @@ def main():
                 print(f"  no grid-script information in {job.origin}")
         jobid = job.files.get('jobid.txt', '').strip() or job.origin
         for d in recs:
-            if 'attempt' in d:
+            if 'channel' in d:                 # gibuu_mix: one line per GiBUU invocation
+                channels.append(d)
+                if d.get('seed'):
+                    seeds[d['seed']].add(d.get('jobid', jobid))
+            elif 'attempt' in d:
                 attempts.append(d)
                 if d.get('seed'):
                     seeds[d['seed']].add(d.get('jobid', jobid))
@@ -188,8 +242,10 @@ def main():
                 jobs_failed[d.get('jobid', jobid)] = d
                 fail_reasons[d.get('reason', '?')] += 1
         if a.verbose and recs:
-            fin = [d for d in recs if 'attempt' not in d]
-            print(f"  {jobid}: {len(recs) - len(fin)} attempt(s), "
+            fin = [d for d in recs if 'attempt' not in d and 'channel' not in d]
+            ninv = sum(1 for d in recs if 'channel' in d)
+            print(f"  {jobid}: {sum(1 for d in recs if 'attempt' in d)} attempt(s)"
+                  f"{f', {ninv} channel invocation(s)' if ninv else ''}, "
                   f"{fin[0].get('events', '?') if fin else '?'} events{' (reconstructed)' if recs[0].get('reconstructed') else ''}")
         for name, text in job.files.items():
             if name == 'nuwro_input.hepmc' or name.endswith('_nuwro_input.hepmc'):
@@ -248,6 +304,10 @@ def main():
                 ev_per_pot = sig * 1e-38 * phi * nucleons
                 print(f"  flux {phi:.4e} nu/POT/cm2, {nucleons:.4e} nucleons in the box")
                 print(f"  POT_Per_Event={1 / ev_per_pot:.6e}   (+- {100 / math.sqrt(n):.2f}% stat)")
+
+    mix = [d for d in jobs_ok.values() if d.get('generator') == 'gibuu_mix']
+    if mix:
+        mixture_report(mix, channels, a)
 
     ndup = 0
     if a.hepmc:

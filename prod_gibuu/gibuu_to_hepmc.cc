@@ -14,6 +14,8 @@
 //
 // Build:  g++ -O2 -std=c++11 -I../common -o gibuu_to_hepmc gibuu_to_hepmc.cc
 // Usage:  gibuu_to_hepmc -o nuwro_input.hepmc -s SEED [-w W] [common options] in.hepmc3 [...]
+//         gibuu_to_hepmc -o nuwro_input.hepmc -s SEED --groups GROUPS [common options]
+//           (mixture of several GiBUU samples, see read_groups)
 
 #include "hepmc_text.h"
 
@@ -30,6 +32,7 @@ static const char* PROG = "gibuu_to_hepmc";
 // The non-resonant pion backgrounds are labelled DIS, as GENIE does for non-resonant
 // pion production.
 static void map_procid(int procid, int& ccnc, int& mode) {
+  procid = std::abs(procid);   // be safe should antineutrino ProcIDs ever be signed
   ccnc = (procid % 100 >= 50) ? 1 : 0;
   switch (procid / 100) {
     case 2: mode = kQE; break;
@@ -100,26 +103,10 @@ static void read_file(const std::string& fname, std::vector<Event>& events, long
   std::cout << "Read " << events.size() - n_before << " events from " << fname << std::endl;
 }
 
-int main(int argc, char** argv) {
-  Options o;
-  double expected_w = -1;
-  std::vector<std::string> rest = parse_common(argc, argv, o);
-  for (size_t i = 0; i < rest.size(); ++i) {
-    if (rest[i] == "-w" && i + 1 < rest.size()) expected_w = std::atof(rest[++i].c_str());
-    else if (!rest[i].empty() && rest[i][0] == '-') die(PROG, "unknown option " + rest[i]);
-    else o.inputs.push_back(rest[i]);
-  }
-  if (o.inputs.empty() || o.output.empty() || o.seed < 0)
-    die(PROG, "usage: gibuu_to_hepmc [-w W] " + common_usage() + " in.hepmc3 [...]");
-
-  std::vector<Event> events;
-  long n_unknown = 0;
-  for (const auto& f : o.inputs) read_file(f, events, n_unknown);
-  if (events.empty()) die(PROG, "no events read");
-
+static void check_events(const std::vector<Event>& events, double expected_w, const std::string& what) {
   for (size_t i = 0; i < events.size(); ++i) {
     const Event& ev = events[i];
-    std::string id = "event " + std::to_string(i) + ": ";
+    std::string id = what + "event " + std::to_string(i) + ": ";
     if (ev.nu.pdg == 0) die(PROG, id + "no beam neutrino");
     if (ev.final.empty()) die(PROG, id + "no outgoing particles");
     if (!(ev.weight > 0)) die(PROG, id + "non-positive weight " + std::to_string(ev.weight));
@@ -128,6 +115,100 @@ int main(int argc, char** argv) {
       m << id << "weight " << ev.weight << " != expected " << expected_w;
       die(PROG, m.str());
     }
+  }
+}
+
+// --groups FILE: mix several GiBUU samples (e.g. flavour x current channels) into one
+// sample. One line per group:
+//   N_TAKE  EXPECTED_W  OUT_W  NU_PDG  CCNC  LABEL  file.hepmc3 [file.hepmc3 ...]
+// Exactly N_TAKE events are drawn at random (without replacement) from the group's
+// files, so the mixture is set by the N_TAKE counts alone and the surplus from
+// whole GiBUU runs never enters the sample. Every event must have the group's
+// GiBUU weight EXPECTED_W, neutrino NU_PDG and CCNC; OUT_W is written as the event
+// weight (1 for an unenriched mixture). Lines starting with # are ignored.
+static void read_groups(const std::string& gfile, long long seed, std::vector<Event>& events, long& n_unknown) {
+  std::ifstream in(gfile);
+  if (!in.good()) die(PROG, "cannot open groups file " + gfile);
+  std::mt19937_64 rng(static_cast<unsigned long long>(seed) * 6364136223846793005ULL + 1442695040888963407ULL);
+  std::string line;
+  int ngroups = 0;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream ss(line);
+    long n_take; double expected_w, out_w; int nu_pdg, ccnc; std::string label, f;
+    if (!(ss >> n_take >> expected_w >> out_w >> nu_pdg >> ccnc >> label)) die(PROG, "bad groups line: " + line);
+    std::vector<Event> g;
+    while (ss >> f) read_file(f, g, n_unknown);
+    ngroups++;
+    if (n_take == 0) continue;
+    if ((long)g.size() < n_take)
+      die(PROG, label + ": " + std::to_string(g.size()) + " events available, " + std::to_string(n_take) + " requested");
+    check_events(g, expected_w, label + " ");
+    for (const auto& ev : g) {
+      if (ev.nu.pdg != nu_pdg) die(PROG, label + ": event with neutrino " + std::to_string(ev.nu.pdg));
+      if (ev.ccnc != ccnc) die(PROG, label + ": event with ccnc=" + std::to_string(ev.ccnc));
+    }
+    std::shuffle(g.begin(), g.end(), rng);
+    g.resize(n_take);
+    for (auto& ev : g) { ev.weight = out_w; events.push_back(ev); }
+    std::cout << label << ": kept " << n_take << " events" << std::endl;
+  }
+  if (ngroups == 0) die(PROG, "no groups in " + gfile);
+}
+
+// --draw N SEED q1 q2 ...: print the number of events per channel for one job, drawn
+// from a multinomial distribution with probabilities q_c (normalised here). Used by
+// generator_gibuu_mix.sh before any GiBUU invocation. The seed is spread with a
+// seed_seq because job seeds are consecutive integers.
+static int draw(int argc, char** argv) {
+  if (argc < 5) die(PROG, "usage: gibuu_to_hepmc --draw N SEED q1 [q2 ...]");
+  long n = std::atol(argv[2]);
+  unsigned long long seed = std::strtoull(argv[3], nullptr, 10);
+  std::vector<double> q;
+  for (int i = 4; i < argc; ++i) q.push_back(std::atof(argv[i]));
+  double tot = 0;
+  for (double x : q) { if (!(x >= 0)) die(PROG, "negative probability"); tot += x; }
+  if (!(tot > 0) || n < 0) die(PROG, "bad --draw arguments");
+  std::seed_seq ss{(unsigned)(seed & 0xffffffffULL), (unsigned)(seed >> 32), 0x6d697864u};
+  std::mt19937_64 rng(ss);
+  std::uniform_real_distribution<double> u01(0.0, 1.0);
+  std::vector<long> c(q.size(), 0);
+  size_t last = 0;
+  for (size_t i = 0; i < q.size(); ++i) if (q[i] > 0) last = i;
+  for (long j = 0; j < n; ++j) {
+    double x = u01(rng) * tot;
+    size_t i = 0;
+    while (i < last && x >= q[i]) { x -= q[i]; ++i; }
+    c[i]++;
+  }
+  for (size_t i = 0; i < c.size(); ++i) std::cout << c[i] << (i + 1 < c.size() ? " " : "\n");
+  return 0;
+}
+
+int main(int argc, char** argv) {
+  if (argc > 1 && std::string(argv[1]) == "--draw") return draw(argc, argv);
+  Options o;
+  double expected_w = -1;
+  std::string groups;
+  std::vector<std::string> rest = parse_common(argc, argv, o);
+  for (size_t i = 0; i < rest.size(); ++i) {
+    if (rest[i] == "-w" && i + 1 < rest.size()) expected_w = std::atof(rest[++i].c_str());
+    else if (rest[i] == "--groups" && i + 1 < rest.size()) groups = rest[++i];
+    else if (!rest[i].empty() && rest[i][0] == '-') die(PROG, "unknown option " + rest[i]);
+    else o.inputs.push_back(rest[i]);
+  }
+  if ((o.inputs.empty() == groups.empty()) || o.output.empty() || o.seed < 0)
+    die(PROG, "usage: gibuu_to_hepmc [-w W] " + common_usage() + " in.hepmc3 [...]\n"
+              "       gibuu_to_hepmc --groups FILE " + common_usage());
+
+  std::vector<Event> events;
+  long n_unknown = 0;
+  if (!groups.empty()) {
+    read_groups(groups, o.seed, events, n_unknown);
+  } else {
+    for (const auto& f : o.inputs) read_file(f, events, n_unknown);
+    if (events.empty()) die(PROG, "no events read");
+    check_events(events, expected_w, "");
   }
   if (n_unknown > 0) std::cout << "WARNING: " << n_unknown << " events with unknown ProcID (mode -1)" << std::endl;
 
