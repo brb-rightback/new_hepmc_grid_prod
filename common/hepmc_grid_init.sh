@@ -23,7 +23,10 @@
 #
 # This file is SOURCED by condor_lar.sh after the larsoft setup and before the SAM
 # consumer starts. Therefore:
-#   * failures use `return <n>` (never `exit`); condor_lar.sh exits with that status
+#   * failures use `return <n>` (never `exit`). NOTE: project.py wraps every init source
+#     in init_source_wrapper.sh, which ends with an echo, so condor_lar.sh never sees the
+#     status and runs lar anyway. A failure therefore also deletes nuwro_input.hepmc:
+#     HepMCFileGen then stops the job, and condor_lar.sh still copies the logs.
 #   * no `set -e`, and nothing here changes the caller's environment except the
 #     variables/functions prefixed HEPMC_/hepmc_/gen_ (generators run in subshells)
 #   * the overlay input file is not known yet, so we always generate
@@ -53,7 +56,43 @@ hepmc_fail() {
   hepmc_log "FATAL: $1"
   hepmc_summary "status=FAILED generator=${HEPMC_GENERATOR:-unknown} reason=\"$1\" seed_base=${HEPMC_SEED_BASE:-unset} jobid=${JOBSUBJOBID:-unknown}"
   cd "$HEPMC_JOBDIR" 2>/dev/null
+  # lar runs even after a failed init source (see above): make sure it cannot read events
+  rm -f "$HEPMC_JOBDIR/nuwro_input.hepmc" "$HEPMC_JOBDIR/eventcount.meta"
+  [ -n "$HEPMC_WORK" ] && rm -rf "$HEPMC_WORK"
   return 1
+}
+
+# hepmc_get_tarball: path of the generator tarball. Uses the copy delivered with jobsub -f;
+# if that transfer failed, copies HEPMC_TARBALL_PATH (full /pnfs path) with ifdh, up to
+# HEPMC_FETCH_TRIES times (default 8; waits 1, 2, 3, 4, 5, 5, ... min between tries,
+# ~25 min in total). With HEPMC_TARBALL_MD5 set, the tarball must have that md5sum.
+hepmc_get_tarball() {
+  local t i sum tries=${HEPMC_FETCH_TRIES:-8}
+  t=$(hepmc_find "$HEPMC_TARBALL")
+  if [ -n "$t" ] && [ -n "$HEPMC_TARBALL_MD5" ]; then
+    sum=$(md5sum "$t" | cut -d' ' -f1)
+    if [ "$sum" != "$HEPMC_TARBALL_MD5" ]; then
+      hepmc_log "delivered $HEPMC_TARBALL has md5 $sum, expected $HEPMC_TARBALL_MD5" >&2
+      case "$t" in "$HEPMC_JOBDIR"/*) rm -f "$t" ;; esac   # keep it out of log.tar
+      t=""
+    fi
+  fi
+  if [ -z "$t" ] && [ -n "$HEPMC_TARBALL_PATH" ]; then
+    t=$HEPMC_JOBDIR/hepmc_fetched_$HEPMC_TARBALL
+    for ((i = 1; i <= tries; i++)); do
+      hepmc_log "fetching $HEPMC_TARBALL_PATH (try $i of $tries)" >&2
+      rm -f "$t"
+      if ifdh cp "$HEPMC_TARBALL_PATH" "$t" >&2 && [ -s "$t" ]; then
+        if [ -z "$HEPMC_TARBALL_MD5" ] || [ "$(md5sum "$t" | cut -d' ' -f1)" = "$HEPMC_TARBALL_MD5" ]; then
+          echo "$t"; return 0
+        fi
+        hepmc_log "fetched tarball has the wrong md5sum" >&2
+      fi
+      [ "$i" -lt "$tries" ] && sleep $(( 60 * (i < 5 ? i : 5) ))
+    done
+    rm -f "$t"; t=""
+  fi
+  [ -n "$t" ] && echo "$t"
 }
 
 hepmc_find() {  # locate a -f input file
@@ -112,11 +151,15 @@ hepmc_main() {
   HEPMC_SEED_BASE=$(( 1 + ((HEPMC_SEED_OFFSET + CLUSTER) % 9000) * 100000 + PROCESS * 10 ))
 
   # ------------------------------------------------------------------ unpack
-  local tarball; tarball=$(hepmc_find "$HEPMC_TARBALL")
-  [ -n "$tarball" ] || { hepmc_fail "tarball $HEPMC_TARBALL not found"; return 1; }
+  local tarball; tarball=$(hepmc_get_tarball)
+  [ -n "$tarball" ] || { hepmc_fail "tarball $HEPMC_TARBALL not found${HEPMC_TARBALL_PATH:+ (and could not be fetched from $HEPMC_TARBALL_PATH)}"; return 1; }
+  hepmc_log "using $tarball ($(md5sum "$tarball" | cut -d' ' -f1))"
   HEPMC_WORK=$HEPMC_JOBDIR/hepmc_work
   rm -rf "$HEPMC_WORK"
   mkdir -p "$HEPMC_WORK" && tar -xzf "$tarball" -C "$HEPMC_WORK" || { hepmc_fail "cannot unpack $tarball"; return 1; }
+  # condor_lar.sh copies the -f files into the job directory, and everything left there
+  # ends up in log.tar: do not ship 60+ MB of tarball back with every job's logs
+  case "$tarball" in "$HEPMC_JOBDIR"/*) rm -f "$tarball" ;; esac
   local plugin=$HEPMC_WORK/generator_${HEPMC_GENERATOR}.sh
   [ -f "$plugin" ] || plugin=$HEPMC_WORK/generator.sh
   [ -f "$plugin" ] || { hepmc_fail "no generator plugin for '$HEPMC_GENERATOR' in the tarball"; return 1; }

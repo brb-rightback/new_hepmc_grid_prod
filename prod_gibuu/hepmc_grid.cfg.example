@@ -3,6 +3,10 @@
 
 HEPMC_GENERATOR=gibuu
 HEPMC_TARBALL=gibuu_grid.tar.gz      # also passed with -f (or found in $CONDOR_DIR_INPUT)
+HEPMC_TARBALL_PATH=/pnfs/uboone/resilient/users/bbogart/hepmc_grid/gibuu_BNB_numuCC/gibuu_grid.tar.gz
+                                     # fetched with ifdh (retries) if the jobsub -f transfer failed
+HEPMC_FETCH_TRIES=8                  # ifdh tries for that fetch (1-5 min apart)
+# HEPMC_TARBALL_MD5=<md5sum of gibuu_grid.tar.gz>  # optional: reject a wrong/corrupt tarball
 HEPMC_NEVENTS_NEEDED=200             # >= largest event_count in the extunbiased SAM definition
 HEPMC_SEED_OFFSET=0                  # change per production/sample to use a different seed block
 HEPMC_MAX_ATTEMPTS=4                 # first attempt + retries

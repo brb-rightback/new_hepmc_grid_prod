@@ -4,6 +4,10 @@
 
 HEPMC_GENERATOR=gibuu_mix
 HEPMC_TARBALL=gibuu_grid.tar.gz      # the same tarball as for single-channel GiBUU samples
+HEPMC_TARBALL_PATH=/pnfs/uboone/resilient/users/bbogart/hepmc_grid/gibuu_BNB_mix/gibuu_grid.tar.gz
+                                     # fetched with ifdh (retries) if the jobsub -f transfer failed
+HEPMC_FETCH_TRIES=8                  # ifdh tries for that fetch (1-5 min apart)
+# HEPMC_TARBALL_MD5=<md5sum of gibuu_grid.tar.gz>  # optional: reject a wrong/corrupt tarball
 HEPMC_NEVENTS_NEEDED=200             # >= largest event_count in the extunbiased SAM definition
 HEPMC_SEED_OFFSET=2250               # mixture: shifted from the CC (0) and NC (4500) samples
 HEPMC_MAX_ATTEMPTS=1                 # required: retries happen per channel inside the plugin
